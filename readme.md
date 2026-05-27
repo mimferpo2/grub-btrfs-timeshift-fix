@@ -3,7 +3,7 @@
 
 > Fix Timeshift btrfs snapshots not showing in GRUB boot menu on Linux Mint 
 
-[![ShellCheck](https://img.shields.io/badge/shellcheck-passing-brightgreen)](https://www.shellcheck.net)
+[![ ShellCheck ](https://img.shields.io/badge/shellcheck-passing-brightgreen)](https://www.shellcheck.net)
 [![Tested on](https://img.shields.io/badge/tested%20on-Linux%20Mint%2022.3-87CF3E)](https://linuxmint.com)
 
 ---
@@ -252,17 +252,10 @@ No need to run `sudo update-grub` manually after each snapshot.
 
 ##### Contributing
 
-Pull requests welcome. Please test on your distro and report results.
 
+Pull requests welcome! 
 
 ---
-
-##### Support
-
-If this helped you, consider buying me a coffee ☕
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-mimferpo-orange)](https://buymeacoffee.com/mimferpo)
-
 
 ##### What's included:
 
