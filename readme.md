@@ -21,17 +21,32 @@ Even though Timeshift snapshots exist and are valid.
 
 ---
 
-##### Root Cause
+## Root Cause
 
-The script `/etc/grub.d/41_snapshots-btrfs` uses an awk regex (`\s`) that is **not supported by mawk** — the default awk on Mint. This causes the UUID detection to silently return empty and the script to fail.
+The script `/etc/grub.d/41_snapshots-btrfs` uses an awk regex (`\s`) that is **not supported by mawk** — the default awk on Ubuntu/Mint/Debian. This causes the UUID detection to silently return empty and the script to fail.
 
 **Confirmed in:** [grub-btrfs issue #421](https://github.com/Antynea/grub-btrfs/issues/421) and [grub-btrfs issue #430](https://github.com/Antynea/grub-btrfs/issues/430)
 
-**Fix:** Install `gawk` which replaces `mawk` and handles the regex correctly — and survives grub-btrfs updates unlike script patches.
+**The mawk/gawk issue is just one of several things that need fixing.** On Linux Mint there are multiple configuration steps required to get Timeshift snapshots fully working in GRUB:
 
----
+- `grub-btrfs` is not in the apt repos — must be installed from source
+- `inotify-tools` and `gawk` are missing dependencies not installed automatically
+- The service watches the wrong directory by default — needs `--timeshift-auto`
+- The default config silently ignores Timeshift snapshot paths
 
-##### My Env
+This repo provides **two ways to fix everything:**
+
+| | Automatic | Manual(Recommanded) |
+|--|-----------|--------|
+| **How** | Run the install script | Follow step-by-step guide |
+| **Time** | ~2 minutes | ~10 minutes |
+| **Control** | Script handles everything | You control each step |
+| **Dry-run** | `--dry-run` flag available | N/A |
+| **Best for** | Most users | Users who want to understand each change |
+
+Choose the approach that suits you below.
+
+##### My Desktop Env(testing machine)
 
 - Linux Mint 22.3 / Ubuntu Noble / Debian (or similar)
 - btrfs root filesystem
@@ -269,3 +284,18 @@ If this helped you, consider buying me a coffee ☕
 - Full manual step-by-step guide 
 - Tested distros table 
 - Related GitHub issues 
+
+---
+
+## Disclaimer
+
+This script modifies system files including GRUB bootloader configuration, systemd services, and boot-related scripts.
+
+**Use at your own risk.**
+
+While every effort has been made to make this script safe and reversible:
+
+- The author takes no responsibility for any system damage, boot failures, or data loss
+- Test with `--dry-run` first or review code to preview changes before applying them
+- As with any modification to boot-related configuration on Linux — you are responsible for your own system.
+- This is provided as-is, as a community fix, with no warranty of any kind — as is standard with open source software and Linux system administration in general.
