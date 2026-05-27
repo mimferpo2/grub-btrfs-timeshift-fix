@@ -2,11 +2,26 @@
 # =============================================================
 # grub-btrfs + Timeshift fix for Linux Mint 22.3 / Ubuntu Noble
 # Author: mimferpo
-# Repo: https://github.com/mimferpo/grub-btrfs-timeshift-mint
+# Repo: https://github.com/mimferpo/grub-btrfs-timeshift-fix
 # Buy me a coffee: https://buymeacoffee.com/mimferpo
 # =============================================================
 
-set -e
+set -euo pipefail
+
+# ─── Dry-run mode ─────────────────────────────────────────────
+DRY_RUN=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Wrapper for mutating commands
+run() {
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "  ${YELLOW}[DRY-RUN]${NC} $*"
+    else
+        "$@"
+    fi
+}
 
 # Colors
 RED='\033[0;31m'
@@ -18,115 +33,174 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Helpers
-ok()     { echo -e "  ${GREEN}✔${NC} $1"; }
-info()   { echo -e "  ${CYAN}→${NC} $1"; }
-warn()   { echo -e "  ${YELLOW}⚠${NC} $1"; }
-fail()   { echo -e "  ${RED}✘${NC} $1"; echo ""; exit 1; }
-header() { echo -e "\n${BOLD}${BLUE}▶ $1${NC}"; echo -e "  ${BLUE}$(printf '%.0s─' {1..45})${NC}"; }
-check()  { echo -e "  ${GREEN}✔${NC} $1"; CHECKS_PASSED=$((CHECKS_PASSED+1)); }
+ok()        { echo -e "  ${GREEN}✔${NC} $1"; }
+info()      { echo -e "  ${CYAN}→${NC} $1"; }
+warn()      { echo -e "  ${YELLOW}⚠${NC} $1"; }
+fail()      { echo -e "  ${RED}✘${NC} $1"; echo ""; exit 1; }
+header()    { echo -e "\n${BOLD}${BLUE}▶ $1${NC}"; echo -e "  ${BLUE}$(printf '%.0s─' {1..45})${NC}"; }
+check()     { echo -e "  ${GREEN}✔${NC} $1"; CHECKS_PASSED=$((CHECKS_PASSED+1)); }
 checkfail() { echo -e "  ${RED}✘${NC} $1"; CHECKS_FAILED=$((CHECKS_FAILED+1)); }
 
 CHECKS_PASSED=0
 CHECKS_FAILED=0
 
+# Require interactive terminal
+if [ ! -t 0 ]; then
+    echo "This script requires an interactive terminal."
+    exit 1
+fi
+
+# Temp directory with guaranteed auto cleanup
+TMPCLONE=$(mktemp -d -t grub-btrfs-XXXXXX)
+trap 'rm -rf "$TMPCLONE"' EXIT
+
+# Safe clear
+command -v clear >/dev/null 2>&1 && clear || true
+
 # Banner
-clear
 echo ""
+if [ "$DRY_RUN" = true ]; then
+echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${YELLOW}║   grub-btrfs + Timeshift — DRY RUN MODE     ║${NC}"
+echo -e "${BOLD}${YELLOW}║   No changes will be made to your system     ║${NC}"
+echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════╝${NC}"
+else
 echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${CYAN}║   grub-btrfs + Timeshift — Complete Fix      ║${NC}"
 echo -e "${BOLD}${CYAN}║   Linux Mint 22.3 / Ubuntu Noble             ║${NC}"
 echo -e "${BOLD}${CYAN}║   github.com/mimferpo/grub-btrfs-timeshift   ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════╝${NC}"
+fi
 echo ""
 
 # ─── Pre-flight checks ────────────────────────────────────────
 header "Pre-flight checks"
 
+# Must not run as root
 if [ "$EUID" -eq 0 ]; then
     fail "Do not run as root. Script uses sudo when needed."
 fi
 ok "Not running as root"
 
+# Dependency preflight
+REQUIRED_CMDS=(sudo grep sed findmnt systemctl btrfs awk)
+MISSING=()
+for cmd in "${REQUIRED_CMDS[@]}"; do
+    command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd")
+done
+if [ "${#MISSING[@]}" -gt 0 ]; then
+    fail "Required commands missing: ${MISSING[*]}"
+fi
+ok "Required system commands found"
+
+# Must be Ubuntu/Mint/Debian
 if ! grep -qiE "ubuntu|linuxmint|debian" /etc/os-release 2>/dev/null; then
     warn "This script is designed for Ubuntu/Mint/Debian."
-    read -p "  Continue anyway? (y/N): " confirm
+    read -rp "  Continue anyway? (y/N): " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
 else
     DISTRO=$(grep "^PRETTY_NAME" /etc/os-release | cut -d'"' -f2)
     ok "Distro: $DISTRO"
 fi
 
-if ! df -T / | grep -q btrfs; then
+# Must be btrfs
+if [ "$(findmnt -no FSTYPE /)" != "btrfs" ]; then
     fail "Root filesystem is not btrfs. This script is not needed."
 fi
 ok "btrfs filesystem confirmed"
 
+# Check Timeshift
 if ! command -v timeshift &>/dev/null; then
     warn "Timeshift not found. Install it first: sudo apt install timeshift"
-    read -p "  Continue anyway? (y/N): " confirm
+    read -rp "  Continue anyway? (y/N): " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
 else
     ok "Timeshift found"
 fi
 
+# Check network using actual git protocol
+info "Checking network connectivity to github.com..."
+if git ls-remote https://github.com/Antynea/grub-btrfs.git >/dev/null 2>&1; then
+    ok "Network connectivity confirmed"
+else
+    fail "Cannot reach github.com — check your network connection"
+fi
+
 # ─── Step 1: Install grub-btrfs ──────────────────────────────
 header "Step 1 — Installing grub-btrfs from source"
 
-info "Installing git..."
-sudo apt install -y git
+info "Updating apt package list..."
+run sudo apt update -q
 
-info "Cloning grub-btrfs..."
-cd ~
-[ -d "grub-btrfs" ] && { warn "Old folder found — removing"; rm -rf grub-btrfs; }
-git clone https://github.com/Antynea/grub-btrfs.git
+info "Installing git and make..."
+run sudo apt install -y git make
+
+info "Cloning grub-btrfs to temp directory ($TMPCLONE)..."
+run git clone https://github.com/Antynea/grub-btrfs.git "$TMPCLONE/grub-btrfs"
 
 info "Running make install..."
-cd ~/grub-btrfs
-sudo make install
-
-info "Cleaning up source folder..."
-cd ~
-rm -rf grub-btrfs
-ok "grub-btrfs installed and source folder removed"
+if [ "$DRY_RUN" = false ]; then
+    cd "$TMPCLONE/grub-btrfs"
+    sudo make install
+    cd "$HOME"
+fi
+ok "grub-btrfs installed — temp folder auto-cleaned on exit"
 
 # ─── Step 2: Install dependencies ────────────────────────────
 header "Step 2 — Installing required dependencies"
 
-sudo apt install -y inotify-tools gawk
-ok "inotify-tools installed — required for snapshot watching"
-ok "gawk installed — fixes mawk regex bug (root cause of UUID error)"
+run sudo apt install -y inotify-tools gawk
+ok "inotify-tools — required for snapshot watching"
+ok "gawk — fixes mawk regex bug (root cause of UUID error)"
 
 # ─── Step 3: Fix the service ─────────────────────────────────
 header "Step 3 — Fixing grub-btrfsd service"
 
-info "Creating service override with --timeshift-auto..."
-sudo systemctl edit grub-btrfsd.service --force <<'EOF'
+# Dynamically find grub-btrfsd binary
+GRUB_BTRFSD=$(command -v grub-btrfsd 2>/dev/null) || fail "grub-btrfsd binary not found — check grub-btrfs installation"
+ok "grub-btrfsd found at: $GRUB_BTRFSD"
+
+info "Creating service override directory..."
+run sudo mkdir -p /etc/systemd/system/grub-btrfsd.service.d
+
+info "Writing override.conf..."
+if [ "$DRY_RUN" = false ]; then
+    sudo tee /etc/systemd/system/grub-btrfsd.service.d/override.conf > /dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=/usr/bin/grub-btrfsd --syslog --timeshift-auto
+ExecStart=$GRUB_BTRFSD --syslog --timeshift-auto
 EOF
-
-info "Verifying override.conf..."
-if sudo cat /etc/systemd/system/grub-btrfsd.service.d/override.conf | grep -q "timeshift-auto"; then
-    ok "override.conf saved correctly:"
-    sudo cat /etc/systemd/system/grub-btrfsd.service.d/override.conf | sed 's/^/     /'
 else
-    fail "override.conf not saved correctly — check manually"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} Would write override.conf with:"
+    echo "     [Service]"
+    echo "     ExecStart="
+    echo "     ExecStart=$GRUB_BTRFSD --syslog --timeshift-auto"
+fi
+
+if [ "$DRY_RUN" = false ]; then
+    if sudo grep -q "timeshift-auto" /etc/systemd/system/grub-btrfsd.service.d/override.conf; then
+        ok "override.conf saved correctly:"
+        sudo sed 's/^/     /' /etc/systemd/system/grub-btrfsd.service.d/override.conf
+    else
+        fail "override.conf not saved correctly — check manually"
+    fi
 fi
 
 info "Applying service changes..."
-sudo systemctl daemon-reload
-sudo systemctl enable grub-btrfsd.service
-sudo systemctl restart grub-btrfsd.service
+run sudo systemctl daemon-reload
+run sudo systemctl enable grub-btrfsd.service
+run sudo systemctl restart grub-btrfsd.service
 
-sleep 2
-if systemctl is-active --quiet grub-btrfsd.service; then
-    ok "grub-btrfsd service is active (running)"
-else
-    echo ""
-    warn "Service failed to start. Status:"
-    sudo systemctl status grub-btrfsd.service --no-pager
-    fail "Fix the service before continuing"
+if [ "$DRY_RUN" = false ]; then
+    sleep 2
+    if systemctl is-active --quiet grub-btrfsd.service; then
+        ok "grub-btrfsd service is active (running)"
+    else
+        echo ""
+        warn "Service failed to start. Status:"
+        sudo systemctl status grub-btrfsd.service --no-pager
+        fail "Fix the service before continuing"
+    fi
 fi
 
 # ─── Step 4: Fix config ───────────────────────────────────────
@@ -134,99 +208,123 @@ header "Step 4 — Fixing grub-btrfs config"
 
 CONFIG="/etc/default/grub-btrfs/config"
 
+[ -f "$CONFIG" ] || fail "Config file not found at $CONFIG — check grub-btrfs installation"
+ok "Config file found"
+
+info "Backing up config..."
+run sudo cp "$CONFIG" "${CONFIG}.bak"
+ok "Config backed up to ${CONFIG}.bak"
+
 info "Fixing GRUB_BTRFS_IGNORE_SPECIFIC_PATH..."
-if grep -q 'GRUB_BTRFS_IGNORE_SPECIFIC_PATH=("@")' "$CONFIG"; then
-    sudo sed -i 's/GRUB_BTRFS_IGNORE_SPECIFIC_PATH=("@")/GRUB_BTRFS_IGNORE_SPECIFIC_PATH=("")/' "$CONFIG"
+if grep -Eq '^GRUB_BTRFS_IGNORE_SPECIFIC_PATH=\("@"\)' "$CONFIG"; then
+    run sudo sed -Ei 's/^GRUB_BTRFS_IGNORE_SPECIFIC_PATH=\("@"\)/GRUB_BTRFS_IGNORE_SPECIFIC_PATH=("")/' "$CONFIG"
     ok "GRUB_BTRFS_IGNORE_SPECIFIC_PATH set to empty"
+elif grep -Eq '^GRUB_BTRFS_IGNORE_SPECIFIC_PATH=\(""\)' "$CONFIG"; then
+    warn "Already set correctly — skipping"
 else
-    warn "Already set or not found — skipping"
+    warn "Not found in expected format — skipping"
 fi
 
 info "Fixing GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE..."
-if grep -q '#GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=("")' "$CONFIG"; then
-    sudo sed -i 's/#GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=("")/GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=("")/' "$CONFIG"
-    ok "GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE uncommented"
+if grep -Eq '^#?GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=' "$CONFIG"; then
+    run sudo sed -Ei 's/^#?GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=.*/GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=("")/' "$CONFIG"
+    ok "GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE set correctly"
 else
-    warn "Already set or not found — skipping"
+    warn "Not found — skipping"
 fi
 
 info "Fixing GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION..."
-if grep -q '#GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"' "$CONFIG"; then
-    sudo sed -i 's/#GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"/GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"/' "$CONFIG"
+if grep -Eq '^#?GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=' "$CONFIG"; then
+    run sudo sed -Ei 's/^#?GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=.*/GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"/' "$CONFIG"
     ok "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION set to true"
 else
-    warn "Already set or not found — skipping"
+    warn "Not found — skipping"
 fi
 
 # ─── Step 5: Update GRUB ─────────────────────────────────────
 header "Step 5 — Updating GRUB"
-sudo update-grub
 
-# ─── Step 6: Verify ──────────────────────────────────────────
-header "Step 6 — Verifying"
-if sudo grep -q "Linux Mint snapshots\|snapshots-btrfs" /boot/grub/grub.cfg; then
-    ok "Snapshots submenu found in GRUB config!"
+if command -v update-grub &>/dev/null; then
+    run sudo update-grub
 else
-    warn "Snapshots not found in GRUB config."
-    info "Make sure you have at least one Timeshift snapshot:"
-    info "sudo timeshift --create --comments 'test'"
-    info "Then run: sudo update-grub"
+    warn "update-grub not found — using grub-mkconfig"
+    run sudo grub-mkconfig -o /boot/grub/grub.cfg
+fi
+
+# ─── Step 6: Verify snapshots ────────────────────────────────
+header "Step 6 — Verifying snapshots in GRUB"
+
+if [ "$DRY_RUN" = false ]; then
+    if sudo grep -q "menuentry.*snapshot\|41_snapshots-btrfs" /boot/grub/grub.cfg; then
+        ok "Snapshots submenu found in GRUB config!"
+    else
+        warn "Snapshots not found in GRUB config."
+        info "Make sure you have at least one Timeshift snapshot:"
+        info "sudo timeshift --create --comments 'test'"
+        info "Then run: sudo update-grub"
+    fi
+else
+    warn "[DRY-RUN] Skipping GRUB config check — no changes made"
 fi
 
 # ─── Step 7: Clean leftover backups ──────────────────────────
 header "Step 7 — Cleaning leftover backup scripts"
+
+shopt -s nullglob
+leftovers=(/etc/grub.d/41_snapshots-btrfs.*)
+shopt -u nullglob
+
 FOUND=0
-for f in /etc/grub.d/41_snapshots-btrfs.bak \
-          /etc/grub.d/41_snapshots-btrfs.backup \
-          /etc/grub.d/41_snapshots-btrfs.bkp; do
-    if [ -f "$f" ]; then
-        warn "Found leftover: $f — removing to prevent duplicate GRUB entries"
-        sudo rm "$f"
-        ok "Removed $f"
-        FOUND=1
-    fi
+for f in "${leftovers[@]}"; do
+    [ "$f" = "/etc/grub.d/41_snapshots-btrfs" ] && continue
+    warn "Found leftover: $f — removing to prevent duplicate GRUB entries"
+    run sudo rm "$f"
+    ok "Removed $f"
+    FOUND=1
 done
 [ "$FOUND" -eq 0 ] && ok "No leftover backup scripts found"
 
 # ─── Final verification ───────────────────────────────────────
+if [ "$DRY_RUN" = false ]; then
+
 header "Final Verification — Checking everything"
 
-# 1. grub-btrfs script exists
+# 1. grub-btrfs script
 if [ -f /etc/grub.d/41_snapshots-btrfs ]; then
-    check "grub-btrfs script installed (/etc/grub.d/41_snapshots-btrfs)"
+    check "grub-btrfs script installed"
 else
     checkfail "grub-btrfs script NOT found"
 fi
 
-# 2. gawk installed
+# 2. gawk
 if command -v gawk &>/dev/null; then
     check "gawk installed ($(gawk --version | head -1))"
 else
-    checkfail "gawk NOT installed — UUID detection will fail"
+    checkfail "gawk NOT installed"
 fi
 
-# 3. inotify-tools installed
+# 3. inotify-tools
 if command -v inotifywait &>/dev/null; then
     check "inotify-tools installed"
 else
-    checkfail "inotify-tools NOT installed — service will fail"
+    checkfail "inotify-tools NOT installed"
 fi
 
-# 4. override.conf exists and correct
-if sudo cat /etc/systemd/system/grub-btrfsd.service.d/override.conf 2>/dev/null | grep -q "timeshift-auto"; then
+# 4. override.conf
+if sudo grep -q "timeshift-auto" /etc/systemd/system/grub-btrfsd.service.d/override.conf 2>/dev/null; then
     check "Service override correct (--timeshift-auto)"
 else
     checkfail "Service override missing or incorrect"
 fi
 
-# 5. Service is running
+# 5. Service running
 if systemctl is-active --quiet grub-btrfsd.service; then
     check "grub-btrfsd service is active (running)"
 else
     checkfail "grub-btrfsd service is NOT running"
 fi
 
-# 6. Service is enabled
+# 6. Service enabled
 if systemctl is-enabled --quiet grub-btrfsd.service; then
     check "grub-btrfsd service is enabled (starts on boot)"
 else
@@ -234,50 +332,54 @@ else
 fi
 
 # 7. Config IGNORE_SPECIFIC_PATH
-if grep -q 'GRUB_BTRFS_IGNORE_SPECIFIC_PATH=("")' /etc/default/grub-btrfs/config; then
+if grep -Eq '^GRUB_BTRFS_IGNORE_SPECIFIC_PATH=\(""\)' "$CONFIG"; then
     check "GRUB_BTRFS_IGNORE_SPECIFIC_PATH set correctly"
 else
     checkfail "GRUB_BTRFS_IGNORE_SPECIFIC_PATH not set correctly"
 fi
 
 # 8. Config IGNORE_SNAPSHOT_TYPE
-if grep -q '^GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=("")' /etc/default/grub-btrfs/config; then
+if grep -Eq '^GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE=\(""\)' "$CONFIG"; then
     check "GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE set correctly"
 else
     checkfail "GRUB_BTRFS_IGNORE_SNAPSHOT_TYPE not set correctly"
 fi
 
 # 9. Config OVERRIDE_BOOT_PARTITION_DETECTION
-if grep -q '^GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"' /etc/default/grub-btrfs/config; then
+if grep -Eq '^GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION="true"' "$CONFIG"; then
     check "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION set correctly"
 else
     checkfail "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION not set correctly"
 fi
 
 # 10. No leftover backup scripts
-LEFTOVERS=$(ls /etc/grub.d/41_snapshots-btrfs.* 2>/dev/null | grep -v "^/etc/grub.d/41_snapshots-btrfs$" || true)
-if [ -z "$LEFTOVERS" ]; then
-    check "No leftover backup scripts in /etc/grub.d/"
-else
-    checkfail "Leftover backup scripts found: $LEFTOVERS — delete them"
-fi
+shopt -s nullglob
+remaining=(/etc/grub.d/41_snapshots-btrfs.*)
+shopt -u nullglob
+CLEAN=1
+for f in "${remaining[@]}"; do
+    [ "$f" = "/etc/grub.d/41_snapshots-btrfs" ] && continue
+    checkfail "Leftover backup script found: $f"
+    CLEAN=0
+done
+[ "$CLEAN" -eq 1 ] && check "No leftover backup scripts"
 
 # 11. Snapshots in GRUB config
-if sudo grep -q "Linux Mint snapshots\|snapshots-btrfs" /boot/grub/grub.cfg; then
+if sudo grep -q "menuentry.*snapshot\|41_snapshots-btrfs" /boot/grub/grub.cfg; then
     check "Snapshots submenu present in /boot/grub/grub.cfg"
 else
     checkfail "Snapshots submenu NOT in /boot/grub/grub.cfg"
 fi
 
-# 12. awk UUID test
-UUID_TEST=$(sudo btrfs subvolume show / 2>/dev/null | grep -m1 "UUID:" | awk '{print $NF}')
+# 12. UUID detection
+UUID_TEST=$(sudo btrfs subvolume show / 2>/dev/null | grep -m1 "UUID:" | awk '{print $NF}' || true)
 if [ -n "$UUID_TEST" ]; then
     check "UUID detection working ($UUID_TEST)"
 else
     checkfail "UUID detection failed — check awk installation"
 fi
 
-# ─── Verification summary ─────────────────────────────────────
+# ─── Summary ──────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}Results: ${GREEN}${CHECKS_PASSED} passed${NC} / ${RED}${CHECKS_FAILED} failed${NC}"
 echo ""
@@ -297,6 +399,15 @@ else
     echo -e "${BOLD}${RED}║   Review the errors above and fix them       ║${NC}"
     echo -e "${BOLD}${RED}║   before rebooting.                          ║${NC}"
     echo -e "${BOLD}${RED}╚══════════════════════════════════════════════╝${NC}"
+fi
+
+else
+    # Dry-run summary
+    echo ""
+    echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${YELLOW}║   DRY-RUN complete — no changes were made    ║${NC}"
+    echo -e "${BOLD}${YELLOW}║   Run without --dry-run to apply fixes       ║${NC}"
+    echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════╝${NC}"
 fi
 
 echo ""
