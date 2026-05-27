@@ -57,21 +57,10 @@ Choose the approach that suits you below.
 
 ## Quick Fix (Automatic)
 
-> ⚠️ Always review scripts before running them:
+> Note: Always review scripts before running them:
 
 ```bash
-# Review first
-curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | less
-```
-
-##### Then run
-```bash
-curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | bash
-```
-
-##### Or run with wget:
-```bash
-wget -qO- https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
 ```
 
 ## Manual Fix

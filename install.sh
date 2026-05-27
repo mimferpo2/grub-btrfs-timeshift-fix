@@ -44,12 +44,6 @@ checkfail() { echo -e "  ${RED}✘${NC} $1"; CHECKS_FAILED=$((CHECKS_FAILED+1));
 CHECKS_PASSED=0
 CHECKS_FAILED=0
 
-# Require interactive terminal
-if [ ! -t 0 ]; then
-    echo "This script requires an interactive terminal."
-    exit 1
-fi
-
 # Temp directory with guaranteed auto cleanup
 TMPCLONE=$(mktemp -d -t grub-btrfs-XXXXXX)
 trap 'rm -rf "$TMPCLONE"' EXIT
