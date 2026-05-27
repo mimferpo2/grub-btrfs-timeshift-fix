@@ -55,26 +55,26 @@ Choose the approach that suits you below.
 
 ---
 
-## Quick Install (Automatic)
+## Quick Fix (Automatic)
 
 > ⚠️ Always review scripts before running them:
 
 ```bash
 # Review first
-curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh?token=GHSAT0AAAAAAD6HAGHU65KS3YMS7STISYGS2QWYNZA | less
+curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | less
 ```
 
 ##### Then run
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh?token=GHSAT0AAAAAAD6HAGHU65KS3YMS7STISYGS2QWYNZA | bash
+curl -fsSL https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | bash
 ```
 
-##### Or with wget:
+##### Or run with wget:
 ```bash
-wget -qO- https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh?token=GHSAT0AAAAAAD6HAGHU65KS3YMS7STISYGS2QWYNZA | bash
+wget -qO- https://raw.githubusercontent.com/mimferpo2/grub-btrfs-timeshift-fix/refs/heads/main/install.sh | bash
 ```
 
-## Manual Installation(Recommanded)
+## Manual Fix
 
 If you prefer to do everything yourself step by step.
 
@@ -296,6 +296,6 @@ This script modifies system files including GRUB bootloader configuration, syste
 While every effort has been made to make this script safe and reversible:
 
 - The author takes no responsibility for any system damage, boot failures, or data loss
-- Test with `--dry-run` first or review code to preview changes before applying them
+- Review code to preview changes before applying them blindly
 - As with any modification to boot-related configuration on Linux — you are responsible for your own system.
 - This is provided as-is, as a community fix, with no warranty of any kind — as is standard with open source software and Linux system administration in general.
